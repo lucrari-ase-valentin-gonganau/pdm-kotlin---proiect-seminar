@@ -5,9 +5,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.FloatingActionButton
@@ -37,13 +35,17 @@ fun AppNavGraph() {
 
     Scaffold(
         topBar = {
-            if (ecranCurent !is TraseeleMele) {
-                AppTopBar(ecranCurent) {
+            AppTopBar(
+                ecranCurent = ecranCurent,
+                onBackClick = {
                     if (backStack.size > 1) {
                         backStack.removeAt(backStack.size - 1)
                     }
+                },
+                onMeniuClick = { pagina ->
+                    backStack.add(pagina)
                 }
-            }
+            )
         },
         floatingActionButton = {
             if (ecranCurent is TraseeleMele) {
@@ -59,13 +61,9 @@ fun AppNavGraph() {
                 }
             }
         },
-        contentWindowInsets = WindowInsets(0.dp, bottom = 50.dp)
+        contentWindowInsets = WindowInsets(0.dp)
     ) { padding ->
-        val topPadding = if (ecranCurent is TraseeleMele) {
-            WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-        } else {
-            padding.calculateTopPadding()
-        }
+        val topPadding = padding.calculateTopPadding()
 
         NavDisplay(
             modifier = Modifier.padding(
