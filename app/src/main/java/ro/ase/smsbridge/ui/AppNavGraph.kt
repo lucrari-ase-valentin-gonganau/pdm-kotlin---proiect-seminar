@@ -1,4 +1,4 @@
-package ro.ase.traseelemele.ui
+package ro.ase.smsbridge.ui
 
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
@@ -6,10 +6,6 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -17,20 +13,17 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
-import ro.ase.traseelemele.ui.components.AppTopBar
-import ro.ase.traseelemele.ui.screens.DespreScreen
-import ro.ase.traseelemele.ui.screens.DetaliiTraseuScreen
-import ro.ase.traseelemele.ui.screens.ListaMesajeScreen
-import ro.ase.traseelemele.ui.screens.SetariScreen
-import ro.ase.traseelemele.ui.screens.StatusSmsScreen
-import ro.ase.traseelemele.ui.screens.TraseeleMeleScreen
-import ro.ase.traseelemele.ui.screens.TraseuNouScreen
-import ro.ase.traseelemele.ui.screens.TrimiteSmsScreen
+import ro.ase.smsbridge.ui.components.AppTopBar
+import ro.ase.smsbridge.ui.screens.DespreScreen
+import ro.ase.smsbridge.ui.screens.ListaMesajeScreen
+import ro.ase.smsbridge.ui.screens.SetariScreen
+import ro.ase.smsbridge.ui.screens.StatusSmsScreen
+import ro.ase.smsbridge.ui.screens.TrimiteSmsScreen
 
 
 @Composable
 fun AppNavGraph() {
-    val backStack = rememberNavBackStack(TraseeleMele)
+    val backStack = rememberNavBackStack(StatusSms)
     val ecranCurent = backStack.lastOrNull()
 
     Scaffold(
@@ -46,20 +39,6 @@ fun AppNavGraph() {
                     backStack.add(pagina)
                 }
             )
-        },
-        floatingActionButton = {
-            if (ecranCurent is TraseeleMele) {
-                FloatingActionButton(
-                    onClick = {
-                        backStack.add(TraseulNou)
-                    }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Adauga traseu nou"
-                    )
-                }
-            }
         },
         contentWindowInsets = WindowInsets(0.dp)
     ) { padding ->
@@ -92,12 +71,7 @@ fun AppNavGraph() {
             entryProvider = entryProvider {
                 entry<StatusSms> {
                     StatusSmsScreen(
-                        onTrimiteSmsClick = {
-                            backStack.add(TrimiteSms)
-                        },
-                        onSetariClick = {
-                            backStack.add(Setari)
-                        },
+
                         onVeziMesajeClick = { tip ->
                             backStack.add(ListaMesaje(tip = tip))
                         }
@@ -112,24 +86,8 @@ fun AppNavGraph() {
                 entry<Despre> {
                     DespreScreen()
                 }
-                entry<DetaliiTraseu> { key ->
-                    DetaliiTraseuScreen(numeTraseu = key.numeTraseu)
-                }
                 entry<Setari> {
                     SetariScreen()
-                }
-                entry<TraseulNou> {
-                    TraseuNouScreen()
-                }
-                entry<TraseeleMele> {
-                    TraseeleMeleScreen(
-                        onItemClick = { meniu ->
-                            backStack.add(DetaliiTraseu(numeTraseu = meniu.nume))
-                        },
-                        onStatusSmsClick = {
-                            backStack.add(StatusSms)
-                        }
-                    )
                 }
             }
         )

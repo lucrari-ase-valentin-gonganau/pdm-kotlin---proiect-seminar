@@ -1,4 +1,4 @@
-package ro.ase.traseelemele.services
+package ro.ase.smsbridge.services
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -19,9 +19,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import ro.ase.traseelemele.SmsSender
-import ro.ase.traseelemele.data.AppDatabase
-import ro.ase.traseelemele.data.Message
+import ro.ase.smsbridge.data.AppDatabase
+import ro.ase.smsbridge.data.Message
 
 class WebSocketService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
@@ -43,7 +42,6 @@ class WebSocketService : Service() {
     private fun observeMessages() {
         serviceScope.launch {
             Log.d("WebSocketService", "Starting to observe messages flow")
-            // Folosim collect (nu collectLatest) pentru a ne asigura ca fiecare mesaj este procesat complet
             webSocketClient.messages.collect { jsonString ->
                 Log.d("WebSocketService", "Flow emitted: $jsonString")
                 if (jsonString.isNotBlank()) {
@@ -73,7 +71,6 @@ class WebSocketService : Service() {
                     Log.d("WebSocketService", "SMS details - ID: $id, Phone: $phone, Message: $body")
 
                     if (id != null) {
-                        // Trimite ACK IMEDIAT
                         val ackResponse = buildJsonObject {
                             put("type", "ack")
                             put("id", id)
@@ -137,7 +134,7 @@ class WebSocketService : Service() {
     private fun createNotification(isConnected: Boolean = false): Notification {
         val statusText = if (isConnected) "Conectat la server - Gata de trimitere" else "Deconectat - Se reîncearcă..."
         return NotificationCompat.Builder(this, "websocket_channel")
-            .setContentTitle("Traseele Mele - SMS Sync")
+            .setContentTitle("SMS Bridge - Sync")
             .setContentText(statusText)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setOngoing(true)

@@ -19,6 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Traseelemele"
+rootProject.name = "SmsBridge"
 include(":app")
- 

@@ -1,4 +1,4 @@
-package ro.ase.traseelemele.ui.screens
+package ro.ase.smsbridge.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,8 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import ro.ase.traseelemele.data.AppDatabase
-import ro.ase.traseelemele.data.Message
+import ro.ase.smsbridge.data.AppDatabase
+import ro.ase.smsbridge.data.Message
 
 @Composable
 fun ListaMesajeScreen(tip: String) {

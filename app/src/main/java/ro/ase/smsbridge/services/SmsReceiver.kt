@@ -1,4 +1,4 @@
-package ro.ase.traseelemele.services
+package ro.ase.smsbridge.services
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -8,8 +8,8 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import ro.ase.traseelemele.data.AppDatabase
-import ro.ase.traseelemele.data.Message
+import ro.ase.smsbridge.data.AppDatabase
+import ro.ase.smsbridge.data.Message
 
 class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {

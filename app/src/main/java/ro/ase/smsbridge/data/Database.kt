@@ -1,4 +1,4 @@
-package ro.ase.traseelemele.data
+package ro.ase.smsbridge.data
 
 import android.content.Context
 import androidx.room.Database

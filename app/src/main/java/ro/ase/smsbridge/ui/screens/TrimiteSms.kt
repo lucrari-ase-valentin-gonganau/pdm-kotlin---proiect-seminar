@@ -1,4 +1,4 @@
-package ro.ase.traseelemele.ui.screens
+package ro.ase.smsbridge.ui.screens
 
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -9,7 +9,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import ro.ase.traseelemele.SmsSender
+import ro.ase.smsbridge.services.SmsSender
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 

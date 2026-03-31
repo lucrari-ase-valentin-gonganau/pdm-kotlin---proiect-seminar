@@ -1,4 +1,4 @@
-package ro.ase.traseelemele.services
+package ro.ase.smsbridge.services
 
 import android.content.Context
 import androidx.datastore.core.DataStore

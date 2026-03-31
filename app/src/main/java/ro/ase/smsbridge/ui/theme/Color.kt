@@ -1,4 +1,4 @@
-package ro.ase.traseelemele.ui.theme
+package ro.ase.smsbridge.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

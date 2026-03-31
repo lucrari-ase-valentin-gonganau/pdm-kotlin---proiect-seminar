@@ -1,4 +1,4 @@
-package ro.ase.traseelemele.ui.screens
+package ro.ase.smsbridge.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -30,14 +30,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import ro.ase.traseelemele.data.AppDatabase
-import ro.ase.traseelemele.services.AppPreferences
-import ro.ase.traseelemele.services.WebSocketClient
+import ro.ase.smsbridge.data.AppDatabase
+import ro.ase.smsbridge.services.AppPreferences
+import ro.ase.smsbridge.services.WebSocketClient
 
 @Composable
 fun StatusSmsScreen(
-    onTrimiteSmsClick: () -> Unit,
-    onSetariClick: () -> Unit,
+
     onVeziMesajeClick: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -52,29 +51,7 @@ fun StatusSmsScreen(
     val sentCount by database.messageDao().getSentCount().collectAsState(initial = 0)
 
     Scaffold(
-        bottomBar = {
-            BottomAppBar(
-                actions = {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        ExtendedFloatingActionButton(
-                            onClick = onTrimiteSmsClick,
-                            icon = { Icon(Icons.Default.Email, contentDescription = null) },
-                            text = { Text("Trimite SMS") },
-                            containerColor = MaterialTheme.colorScheme.primaryContainer
-                        )
-                        ExtendedFloatingActionButton(
-                            onClick = onSetariClick,
-                            icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                            text = { Text("Setări SMS") },
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer
-                        )
-                    }
-                }
-            )
-        }
+
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -83,11 +60,6 @@ fun StatusSmsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text(
-                text = "Sumar Serviciu SMS",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
 
             if (wsUrl.isNullOrBlank()) {
                 Card(
@@ -103,10 +75,11 @@ fun StatusSmsScreen(
                     ) {
                         Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
                         Text(
-                            text = "URL WebSocket neconfigurat. Accesează setările.",
+                            text = "URL WebSocket neconfigurat. Accesează setările.\n Pentru mai multe informatii accesati: https://web-pdm-valentin.gonganau.ro",
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodyMedium
                         )
+
                     }
                 }
             }

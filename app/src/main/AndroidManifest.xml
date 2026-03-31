@@ -20,12 +20,12 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Traseelemele"
+        android:theme="@style/Theme.SmsBridge"
         android:usesCleartextTraffic="true"
         tools:targetApi="31">
 
         <service
-            android:name="ro.ase.traseelemele.services.WebSocketService"
+            android:name="ro.ase.smsbridge.services.WebSocketService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="specialUse">
@@ -34,9 +34,9 @@
         </service>
 
         <activity
-            android:name="ro.ase.traseelemele.MainActivity"
+            android:name="ro.ase.smsbridge.MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.Traseelemele">
+            android:theme="@style/Theme.SmsBridge">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 

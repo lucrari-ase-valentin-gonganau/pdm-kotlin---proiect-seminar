@@ -1,4 +1,4 @@
-package ro.ase.traseelemele
+package ro.ase.smsbridge.services
 
 import android.content.Context
 import android.os.Build

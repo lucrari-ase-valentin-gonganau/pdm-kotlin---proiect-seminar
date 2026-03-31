@@ -1,4 +1,4 @@
-package ro.ase.traseelemele
+package ro.ase.smsbridge
 
 import org.junit.Test
 

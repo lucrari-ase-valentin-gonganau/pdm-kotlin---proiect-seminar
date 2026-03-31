@@ -1,4 +1,4 @@
-package ro.ase.traseelemele.ui.components
+package ro.ase.smsbridge.ui.components
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -16,12 +16,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.navigation3.runtime.NavKey
-import ro.ase.traseelemele.ui.Despre
-import ro.ase.traseelemele.ui.DetaliiTraseu
-import ro.ase.traseelemele.ui.Setari
-import ro.ase.traseelemele.ui.StatusSms
-import ro.ase.traseelemele.ui.TraseeleMele
-import ro.ase.traseelemele.ui.TraseulNou
+import ro.ase.smsbridge.ui.Despre
+import ro.ase.smsbridge.ui.Setari
+import ro.ase.smsbridge.ui.StatusSms
+import ro.ase.smsbridge.ui.TrimiteSms
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,15 +29,13 @@ fun AppTopBar(
     onMeniuClick: (NavKey) -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    val estePaginaPrincipala = ecranCurent is TraseeleMele
+    val estePaginaPrincipala = ecranCurent is StatusSms
     
     val titlu = when(ecranCurent) {
-        is TraseeleMele -> "Traseele Mele"
         is Despre -> "Despre aplicație"
-        is DetaliiTraseu -> "Detalii Traseu"
         is Setari -> "Setări"
-        is TraseulNou -> "Traseu nou"
         is StatusSms -> "Serviciu SMS"
+        is TrimiteSms -> "Trimite SMS"
         else -> ""
     }
 
@@ -62,6 +58,13 @@ fun AppTopBar(
                 expanded = menuExpanded,
                 onDismissRequest = { menuExpanded = false }
             ) {
+                DropdownMenuItem(
+                    text = { Text("Trimite SMS") },
+                    onClick = {
+                        menuExpanded = false
+                        onMeniuClick(TrimiteSms)
+                    }
+                )
                 DropdownMenuItem(
                     text = { Text("Setări") },
                     onClick = {

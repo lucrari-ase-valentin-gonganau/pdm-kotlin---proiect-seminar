@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "ro.ase.traseeleente"
+    namespace = "ro.ase.smsbridge"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "ro.ase.traseeleente"
+        applicationId = "ro.ase.smsbridge"
         minSdk = 24
         targetSdk = 36
         versionCode = 1

@@ -1,4 +1,4 @@
-package ro.ase.traseelemele.ui.screens
+package ro.ase.smsbridge.ui.screens
 
 import android.content.Intent
 import android.os.Build
@@ -38,8 +38,8 @@ import androidx.compose.ui.unit.dp
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.launch
-import ro.ase.traseelemele.services.AppPreferences
-import ro.ase.traseelemele.services.WebSocketService
+import ro.ase.smsbridge.services.AppPreferences
+import ro.ase.smsbridge.services.WebSocketService
 
 @Composable
 fun SetariScreen() {

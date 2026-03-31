@@ -1,4 +1,4 @@
-package ro.ase.traseelemele.services
+package ro.ase.smsbridge.services
 
 import android.content.Context
 import android.util.Log
@@ -73,53 +73,66 @@ class WebSocketClient private constructor(context: Context) {
     }
 
     private fun connect(url: String) {
-        isManuallyClosed = false
-        webSocket?.close(1000, "Reconnecting")
-        
-        val request = Request.Builder().url(url).build()
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.d("WebSocketClient", "Connected to $url")
-                _isConnected.value = true
+        try {
+            isManuallyClosed = false
+            webSocket?.close(1000, "Reconnecting")
+            
+            // Normalize ws/wss to http/https
+            val normalizedUrl = when {
+                url.startsWith("ws://", ignoreCase = true) -> url
+                url.startsWith("wss://", ignoreCase = true) -> url
+                url.contains("://") -> url
+                else -> "ws://$url" // Default to ws if no scheme
             }
 
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                Log.d("WS", "Received: $text")
-                
-                // Trimite ACK imediat pe acelasi socket daca e un mesaj tip send-sms
-                try {
-                    val json = JSONObject(text)
-                    if (json.optString("type") == "send-sms") {
-                        val id = json.optString("id")
-                        if (id.isNotEmpty()) {
-                            val ack = JSONObject().apply {
-                                put("type", "ack")
-                                put("id", id)
-                            }.toString()
-                            webSocket.send(ack)
-                            Log.d("WS", "Ack sent immediately: $ack")
+            val request = Request.Builder().url(normalizedUrl).build()
+            webSocket = client.newWebSocket(request, object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    Log.d("WebSocketClient", "Connected to $normalizedUrl")
+                    _isConnected.value = true
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    Log.d("WS", "Received: $text")
+                    
+                    // Trimite ACK imediat pe acelasi socket daca e un mesaj tip send-sms
+                    try {
+                        val json = JSONObject(text)
+                        if (json.optString("type") == "send-sms") {
+                            val id = json.optString("id")
+                            if (id.isNotEmpty()) {
+                                val ack = JSONObject().apply {
+                                    put("type", "ack")
+                                    put("id", id)
+                                }.toString()
+                                webSocket.send(ack)
+                                Log.d("WS", "Ack sent immediately: $ack")
+                            }
                         }
+                    } catch (e: Exception) {
+                        Log.e("WS", "Error parsing for auto-ack: ${e.message}")
                     }
-                } catch (e: Exception) {
-                    Log.e("WS", "Error parsing for auto-ack: ${e.message}")
+
+                    scope.launch {
+                        _messages.emit(text)
+                    }
                 }
 
-                scope.launch {
-                    _messages.emit(text)
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    _isConnected.value = false
+                    if (!isManuallyClosed) retryConnection()
                 }
-            }
 
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                _isConnected.value = false
-                if (!isManuallyClosed) retryConnection()
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.e("WebSocketClient", "Failure: ${t.message}")
-                _isConnected.value = false
-                if (!isManuallyClosed) retryConnection()
-            }
-        })
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    Log.e("WebSocketClient", "Failure: ${t.message}")
+                    _isConnected.value = false
+                    if (!isManuallyClosed) retryConnection()
+                }
+            })
+        } catch (e: Exception) {
+            Log.e("WebSocketClient", "Error building request for URL: $url", e)
+            _isConnected.value = false
+        }
     }
 
     fun sendMessage(message: String) {
