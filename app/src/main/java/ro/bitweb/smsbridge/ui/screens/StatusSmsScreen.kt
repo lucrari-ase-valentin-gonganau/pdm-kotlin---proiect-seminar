@@ -4,19 +4,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -32,50 +26,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import ro.bitweb.smsbridge.data.AppDatabase
 import ro.bitweb.smsbridge.services.AppPreferences
-import ro.bitweb.smsbridge.services.WebSocketClient
+import ro.bitweb.smsbridge.ui.components.WebSocketStatusIndicator
 
 @Composable
 fun StatusSmsScreen(
-    onTrimiteSmsClick: () -> Unit,
-    onSetariClick: () -> Unit,
     onVeziMesajeClick: (String) -> Unit
 ) {
     val context = LocalContext.current
     val appPreferences = remember { AppPreferences(context) }
-    val webSocketClient = remember { WebSocketClient.getInstance(context) }
     val database = remember { AppDatabase.getDatabase(context) }
-    
-    val isConnected by webSocketClient.isConnected.collectAsState()
+
     val wsUrl by appPreferences.get("ws_url").collectAsState(initial = null)
-    
+
     val receivedCount by database.messageDao().getReceivedCount().collectAsState(initial = 0)
     val sentCount by database.messageDao().getSentCount().collectAsState(initial = 0)
 
-    Scaffold(
-        bottomBar = {
-            BottomAppBar(
-                actions = {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        ExtendedFloatingActionButton(
-                            onClick = onTrimiteSmsClick,
-                            icon = { Icon(Icons.Default.Email, contentDescription = null) },
-                            text = { Text("Trimite SMS") },
-                            containerColor = MaterialTheme.colorScheme.primaryContainer
-                        )
-                        ExtendedFloatingActionButton(
-                            onClick = onSetariClick,
-                            icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                            text = { Text("Setări SMS") },
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer
-                        )
-                    }
-                }
-            )
-        }
-    ) { paddingValues ->
+    Scaffold { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -88,6 +54,8 @@ fun StatusSmsScreen(
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold
             )
+
+            WebSocketStatusIndicator()
 
             if (wsUrl.isNullOrBlank()) {
                 Card(
@@ -124,37 +92,6 @@ fun StatusSmsScreen(
                 color = MaterialTheme.colorScheme.secondary,
                 onClick = { onVeziMesajeClick("trimise") }
             )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isConnected) 
-                        MaterialTheme.colorScheme.primaryContainer 
-                    else 
-                        MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = "Starea serviciului",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = if (isConnected) "Conectat la WebSocket" else "Deconectat",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = if (isConnected) 
-                            MaterialTheme.colorScheme.primary 
-                        else 
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
         }
     }
 }

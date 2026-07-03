@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import ro.bitweb.smsbridge.SmsSender
+import ro.bitweb.smsbridge.ui.components.WebSocketStatusIndicator
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 
@@ -38,6 +39,8 @@ fun TrimiteSmsScreen() {
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        WebSocketStatusIndicator()
+
         OutlinedTextField(
             value = numar,
             onValueChange = { numar = it },

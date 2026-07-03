@@ -40,6 +40,7 @@ import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.launch
 import ro.bitweb.smsbridge.services.AppPreferences
 import ro.bitweb.smsbridge.services.WebSocketService
+import ro.bitweb.smsbridge.ui.components.WebSocketStatusIndicator
 
 @Composable
 fun SetariScreen() {
@@ -77,6 +78,8 @@ fun SetariScreen() {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        WebSocketStatusIndicator()
+
         Text(
             text = "Configurare Conexiune",
             style = MaterialTheme.typography.titleMedium,

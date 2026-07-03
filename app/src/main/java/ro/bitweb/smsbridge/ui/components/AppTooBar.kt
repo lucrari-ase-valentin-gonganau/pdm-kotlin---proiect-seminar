@@ -16,12 +16,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.navigation3.runtime.NavKey
-import ro.bitweb.smsbridge.ui.Despre
-import ro.bitweb.smsbridge.ui.DetaliiTraseu
 import ro.bitweb.smsbridge.ui.Setari
 import ro.bitweb.smsbridge.ui.StatusSms
-import ro.bitweb.smsbridge.ui.TraseeleMele
-import ro.bitweb.smsbridge.ui.TraseulNou
+import ro.bitweb.smsbridge.ui.TrimiteSms
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,15 +28,12 @@ fun AppTopBar(
     onMeniuClick: (NavKey) -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    val estePaginaPrincipala = ecranCurent is TraseeleMele
-    
+    val estePaginaPrincipala = ecranCurent is StatusSms
+
     val titlu = when(ecranCurent) {
-        is TraseeleMele -> "Traseele Mele"
-        is Despre -> "Despre aplicație"
-        is DetaliiTraseu -> "Detalii Traseu"
         is Setari -> "Setări"
-        is TraseulNou -> "Traseu nou"
         is StatusSms -> "Serviciu SMS"
+        is TrimiteSms -> "Trimite SMS"
         else -> ""
     }
 
@@ -63,17 +57,17 @@ fun AppTopBar(
                 onDismissRequest = { menuExpanded = false }
             ) {
                 DropdownMenuItem(
+                    text = { Text("Trimite SMS") },
+                    onClick = {
+                        menuExpanded = false
+                        onMeniuClick(TrimiteSms)
+                    }
+                )
+                DropdownMenuItem(
                     text = { Text("Setări") },
                     onClick = {
                         menuExpanded = false
                         onMeniuClick(Setari)
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Despre") },
-                    onClick = {
-                        menuExpanded = false
-                        onMeniuClick(Despre)
                     }
                 )
             }

@@ -14,7 +14,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.core.content.ContextCompat
 import ro.bitweb.smsbridge.services.WebSocketService
 import ro.bitweb.smsbridge.ui.AppNavGraph
-import ro.bitweb.smsbridge.ui.theme.TraseeleenteTheme
+import ro.bitweb.smsbridge.ui.theme.SmsBridgeTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -30,7 +30,7 @@ class MainActivity : ComponentActivity() {
 
         enableEdgeToEdge()
         setContent {
-            TraseeleenteTheme {
+            SmsBridgeTheme {
                 // POST_NOTIFICATIONS era declarata in manifest dar nu era ceruta
                 // niciodata la runtime (obligatoriu pe Android 13+ / targetSdk 36).
                 // Fara ea, notificarea foreground-ului WebSocketService (indicatorul
