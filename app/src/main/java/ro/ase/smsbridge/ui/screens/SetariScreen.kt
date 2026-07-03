@@ -46,7 +46,6 @@ fun SetariScreen() {
     val context = LocalContext.current
     val preferences = remember { AppPreferences(context) }
     val scope = rememberCoroutineScope()
-    
     val savedWsUrl by preferences.get("ws_url").collectAsState(initial = "")
     val runInBackground by preferences.getBoolean("run_in_background", false).collectAsState(initial = false)
     
@@ -62,10 +61,11 @@ fun SetariScreen() {
         contract = ScanContract(),
         onResult = { result ->
             if (result.contents != null) {
-                wsUrlInput = result.contents
+                val scannnedUrl = result.contents.trim()
+                wsUrlInput = scannnedUrl
                 scope.launch {
-                    preferences.save("ws_url", result.contents)
-                    Toast.makeText(context, "URL salvat!", Toast.LENGTH_SHORT).show()
+                    preferences.save("ws_url", scannnedUrl)
+                    Toast.makeText(context, "URL scanat și conectat!", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -86,7 +86,7 @@ fun SetariScreen() {
         OutlinedTextField(
             value = wsUrlInput,
             onValueChange = { wsUrlInput = it },
-            label = { Text("URL WebSocket") },
+            label = { Text("URL WebSocket (ex: ws://server:port)") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
         )
@@ -95,8 +95,9 @@ fun SetariScreen() {
             Button(
                 onClick = {
                     scope.launch {
-                        preferences.save("ws_url", wsUrlInput)
-                        Toast.makeText(context, "Salvat!", Toast.LENGTH_SHORT).show()
+                        val finalUrl = wsUrlInput.trim()
+                        preferences.save("ws_url", finalUrl)
+                        Toast.makeText(context, "Setări salvate!", Toast.LENGTH_SHORT).show()
                     }
                 },
                 modifier = Modifier.weight(1f)
@@ -106,7 +107,15 @@ fun SetariScreen() {
             }
 
             Button(
-                onClick = { scanLauncher.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)) },
+                onClick = { 
+                    scanLauncher.launch(
+                        ScanOptions()
+                            .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                            .setPrompt("Scanează codul QR pentru server")
+                            .setBeepEnabled(true)
+                            .setOrientationLocked(false)
+                    ) 
+                },
                 modifier = Modifier.weight(1f)
             ) {
                 Icon(Icons.Default.Info, null)
@@ -150,10 +159,8 @@ fun SetariScreen() {
                             } else {
                                 context.startService(intent)
                             }
-                            Toast.makeText(context, "Serviciu pornit", Toast.LENGTH_SHORT).show()
                         } else {
                             context.stopService(intent)
-                            Toast.makeText(context, "Serviciu oprit", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }

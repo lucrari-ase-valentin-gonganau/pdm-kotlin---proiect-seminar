@@ -18,24 +18,30 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
-import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 class WebSocketClient private constructor(context: Context) {
     private val appPreferences = AppPreferences(context)
+
     private val client = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
-        .connectTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .pingInterval(30, TimeUnit.SECONDS)
         .build()
-    
+
     private var webSocket: WebSocket? = null
     private var currentUrl: String? = null
     private var isManuallyClosed = false
     private val scope = CoroutineScope(Dispatchers.IO + Job())
     private var observeJob: Job? = null
+    private var connectJob: Job? = null
 
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected
+
+    private val _lastError = MutableStateFlow<String?>(null)
+    val lastError: StateFlow<String?> = _lastError
 
     private val _messages = MutableSharedFlow<String>(replay = 5, extraBufferCapacity = 64)
     val messages: SharedFlow<String> = _messages.asSharedFlow()
@@ -59,107 +65,108 @@ class WebSocketClient private constructor(context: Context) {
         observeJob?.cancel()
         observeJob = scope.launch {
             appPreferences.get("ws_url").collectLatest { url ->
-                if (url != currentUrl) {
-                    currentUrl = url
-                    if (!url.isNullOrBlank()) {
-                        Log.d("WebSocketClient", "Connecting to: $url")
-                        connect(url)
-                    } else {
-                        disconnect()
+                val trimmedUrl = url?.trim()
+                if (!trimmedUrl.isNullOrBlank()) {
+                    if (trimmedUrl != currentUrl || !_isConnected.value) {
+                        connect(trimmedUrl)
                     }
+                } else {
+                    disconnect()
                 }
             }
         }
     }
 
-    private fun connect(url: String) {
-        try {
-            isManuallyClosed = false
-            webSocket?.close(1000, "Reconnecting")
-            
-            // Normalize ws/wss to http/https
-            val normalizedUrl = when {
-                url.startsWith("ws://", ignoreCase = true) -> url
-                url.startsWith("wss://", ignoreCase = true) -> url
-                url.contains("://") -> url
-                else -> "ws://$url" // Default to ws if no scheme
-            }
+    fun connect(url: String? = currentUrl) {
+        val targetUrl = url?.trim() ?: return
+        if (targetUrl.isBlank()) return
 
-            val request = Request.Builder().url(normalizedUrl).build()
-            webSocket = client.newWebSocket(request, object : WebSocketListener() {
-                override fun onOpen(webSocket: WebSocket, response: Response) {
-                    Log.d("WebSocketClient", "Connected to $normalizedUrl")
-                    _isConnected.value = true
+        currentUrl = targetUrl
+        isManuallyClosed = false
+        _lastError.value = null
+
+        connectJob?.cancel()
+        connectJob = scope.launch {
+            try {
+                webSocket?.cancel()
+                webSocket = null
+                _isConnected.value = false
+
+                val normalizedUrl = when {
+                    targetUrl.startsWith("wss://", ignoreCase = true) -> targetUrl
+                    targetUrl.startsWith("ws://", ignoreCase = true) -> targetUrl
+                    targetUrl.startsWith("https://", ignoreCase = true) -> targetUrl.replaceFirst("https://", "wss://", ignoreCase = true)
+                    targetUrl.startsWith("http://", ignoreCase = true) -> targetUrl.replaceFirst("http://", "ws://", ignoreCase = true)
+                    targetUrl.contains(".") && !targetUrl.startsWith("10.") && !targetUrl.startsWith("192.") && !targetUrl.startsWith("localhost") -> "wss://$targetUrl"
+                    else -> "ws://$targetUrl"
                 }
 
-                override fun onMessage(webSocket: WebSocket, text: String) {
-                    Log.d("WS", "Received: $text")
-                    
-                    // Trimite ACK imediat pe acelasi socket daca e un mesaj tip send-sms
-                    try {
-                        val json = JSONObject(text)
-                        if (json.optString("type") == "send-sms") {
-                            val id = json.optString("id")
-                            if (id.isNotEmpty()) {
-                                val ack = JSONObject().apply {
-                                    put("type", "ack")
-                                    put("id", id)
-                                }.toString()
-                                webSocket.send(ack)
-                                Log.d("WS", "Ack sent immediately: $ack")
-                            }
+                Log.d("WebSocketClient", "Connecting to: $normalizedUrl")
+                val request = Request.Builder()
+                    .url(normalizedUrl)
+                    .addHeader("Origin", "http://localhost")
+                    .addHeader("User-Agent", "SmsBridge-Android")
+                    .build()
+
+                webSocket = client.newWebSocket(request, object : WebSocketListener() {
+                    override fun onOpen(webSocket: WebSocket, response: Response) {
+                        _isConnected.value = true
+                        _lastError.value = null
+                    }
+
+                    override fun onMessage(webSocket: WebSocket, text: String) {
+                        scope.launch { _messages.emit(text) }
+                    }
+
+                    override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                        _isConnected.value = false
+                        if (!isManuallyClosed) retryConnection()
+                    }
+
+                    override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                        val errorDetail = when {
+                            response?.code == 404 -> "Serverul nu a răspuns (404)"
+                            response?.code == 403 -> "Acces refuzat (403)"
+                            t.message?.contains("cleartxt", ignoreCase = true) == true -> "Android blochează WS simplu. Folosește WSS."
+                            t.message?.contains("Failed to connect", ignoreCase = true) == true -> "Server inaccesibil la $normalizedUrl"
+                            else -> t.message ?: "Eroare rețea"
                         }
-                    } catch (e: Exception) {
-                        Log.e("WS", "Error parsing for auto-ack: ${e.message}")
+                        Log.e("WebSocketClient", "Failure: $errorDetail")
+                        _lastError.value = errorDetail
+                        _isConnected.value = false
+                        if (!isManuallyClosed) retryConnection()
                     }
-
-                    scope.launch {
-                        _messages.emit(text)
-                    }
-                }
-
-                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    _isConnected.value = false
-                    if (!isManuallyClosed) retryConnection()
-                }
-
-                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    Log.e("WebSocketClient", "Failure: ${t.message}")
-                    _isConnected.value = false
-                    if (!isManuallyClosed) retryConnection()
-                }
-            })
-        } catch (e: Exception) {
-            Log.e("WebSocketClient", "Error building request for URL: $url", e)
-            _isConnected.value = false
+                })
+            } catch (e: Exception) {
+                _lastError.value = "Eroare: ${e.message}"
+                Log.e("WebSocketClient", "Connect error: ${e.message}")
+            }
         }
     }
 
     fun sendMessage(message: String) {
         scope.launch {
             if (_isConnected.value) {
-                val result = webSocket?.send(message) ?: false
-                Log.d("WS", "Manual send: $message (Success: $result)")
-            } else {
-                Log.w("WebSocketClient", "Cannot send, not connected")
+                webSocket?.send(message)
             }
         }
     }
 
     private fun retryConnection() {
+        if (isManuallyClosed) return
         scope.launch {
-            delay(5000)
+            delay(10000)
             currentUrl?.let {
-                if (!_isConnected.value && !isManuallyClosed) {
-                    connect(it)
-                }
+                if (!_isConnected.value) connect(it)
             }
         }
     }
 
     fun disconnect() {
         isManuallyClosed = true
-        webSocket?.close(1000, "Disconnected")
+        webSocket?.close(1000, "Manual disconnect")
+        webSocket = null
         _isConnected.value = false
+        currentUrl = null
     }
 }

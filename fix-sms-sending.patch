@@ -1,0 +1,671 @@
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index c5201d7..e0eeacc 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -33,6 +33,30 @@
+                 android:value="WebSocket connection for SMS synchronization" />
+         </service>
+ 
++        <!-- Primeste rezultatul REAL de trimitere/livrare SMS de la SmsManager
++             (vezi SmsSender.kt / SmsStatusReceiver.kt). Nu e exportat: broadcast-urile
++             vin doar din PendingIntent-uri create de aplicatia noastra. -->
++        <receiver
++            android:name="ro.ase.traseelemele.services.SmsStatusReceiver"
++            android:enabled="true"
++            android:exported="false">
++            <intent-filter>
++                <action android:name="ro.ase.traseelemele.SMS_SENT" />
++                <action android:name="ro.ase.traseelemele.SMS_DELIVERED" />
++            </intent-filter>
++        </receiver>
++
++        <!-- Reporneste WebSocketService dupa reboot, ca sa nu ramana app-ul "mort"
++             pana la deschiderea manuala. Vezi BootReceiver.kt. -->
++        <receiver
++            android:name="ro.ase.traseelemele.services.BootReceiver"
++            android:enabled="true"
++            android:exported="false">
++            <intent-filter>
++                <action android:name="android.intent.action.BOOT_COMPLETED" />
++            </intent-filter>
++        </receiver>
++
+         <activity
+             android:name="ro.ase.traseelemele.MainActivity"
+             android:exported="true"
+diff --git a/app/src/main/java/ro/ase/traseelemele/MainActivity.kt b/app/src/main/java/ro/ase/traseelemele/MainActivity.kt
+index 92abdd0..440b6f8 100644
+--- a/app/src/main/java/ro/ase/traseelemele/MainActivity.kt
++++ b/app/src/main/java/ro/ase/traseelemele/MainActivity.kt
+@@ -1,11 +1,17 @@
+ package ro.ase.traseelemele
+ 
++import android.Manifest
+ import android.content.Intent
++import android.content.pm.PackageManager
+ import android.os.Build
+ import android.os.Bundle
+ import androidx.activity.ComponentActivity
++import androidx.activity.compose.rememberLauncherForActivityResult
+ import androidx.activity.compose.setContent
+ import androidx.activity.enableEdgeToEdge
++import androidx.activity.result.contract.ActivityResultContracts
++import androidx.compose.runtime.LaunchedEffect
++import androidx.core.content.ContextCompat
+ import ro.ase.traseelemele.services.WebSocketService
+ import ro.ase.traseelemele.ui.AppNavGraph
+ import ro.ase.traseelemele.ui.theme.TraseeleenteTheme
+@@ -25,6 +31,27 @@ class MainActivity : ComponentActivity() {
+         enableEdgeToEdge()
+         setContent {
+             TraseeleenteTheme {
++                // POST_NOTIFICATIONS era declarata in manifest dar nu era ceruta
++                // niciodata la runtime (obligatoriu pe Android 13+ / targetSdk 36).
++                // Fara ea, notificarea foreground-ului WebSocketService (indicatorul
++                // "Conectat / Gata de trimitere") nu se afiseaza deloc.
++                val notificationPermissionLauncher = rememberLauncherForActivityResult(
++                    ActivityResultContracts.RequestPermission()
++                ) { /* nu blocam functionarea aplicatiei daca userul refuza */ }
++
++                LaunchedEffect(Unit) {
++                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
++                        val areDeja = ContextCompat.checkSelfPermission(
++                            this@MainActivity,
++                            Manifest.permission.POST_NOTIFICATIONS
++                        ) == PackageManager.PERMISSION_GRANTED
++
++                        if (!areDeja) {
++                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
++                        }
++                    }
++                }
++
+                 AppNavGraph()
+             }
+         }
+diff --git a/app/src/main/java/ro/ase/traseelemele/data/Database.kt b/app/src/main/java/ro/ase/traseelemele/data/Database.kt
+index 605184b..2136c99 100644
+--- a/app/src/main/java/ro/ase/traseelemele/data/Database.kt
++++ b/app/src/main/java/ro/ase/traseelemele/data/Database.kt
+@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
+ 
+ @Database(
+     entities = [Message::class],
+-    version = 1
++    version = 2
+ )
+ abstract class AppDatabase : RoomDatabase() {
+     abstract fun messageDao(): MessageDao
+@@ -22,7 +22,12 @@ abstract class AppDatabase : RoomDatabase() {
+                     context.applicationContext,
+                     AppDatabase::class.java,
+                     "app_database"
+-                ).build()
++                )
++                    // S-a adaugat campul externalId (v1 -> v2). Nu avem inca o Migration
++                    // scrisa de mana, asa ca DB-ul local se recreeaza la upgrade
++                    // (se pierde istoricul local de mesaje, dar e ok pentru un proiect activ).
++                    .fallbackToDestructiveMigration()
++                    .build()
+                 INSTANCE = instance
+                 instance
+             }
+diff --git a/app/src/main/java/ro/ase/traseelemele/data/Message.kt b/app/src/main/java/ro/ase/traseelemele/data/Message.kt
+index f802d59..c84530a 100644
+--- a/app/src/main/java/ro/ase/traseelemele/data/Message.kt
++++ b/app/src/main/java/ro/ase/traseelemele/data/Message.kt
+@@ -13,29 +13,57 @@ data class Message(
+     @PrimaryKey(autoGenerate = true) val id: Int = 0,
+     val sender: String,
+     val message: String,
+-    val status: String
++    val status: String,
++    // ID-ul mesajului asa cum vine de la server prin WebSocket (campul "id" din JSON).
++    // Folosit ca sa putem actualiza statusul (Trimis/Livrat/Esuat) cand vine raspunsul
++    // real de la SmsManager, care soseste asincron dupa ce randul a fost deja inserat.
++    val externalId: String? = null
+ )
+ 
+ @Dao
+ interface MessageDao {
+     @Insert
+-    suspend fun insert(message: Message)
++    suspend fun insert(message: Message): Long
+ 
+     @Update
+     suspend fun update(message: Message)
+ 
++    // Actualizeaza statusul unui mesaj trimis, pe baza ID-ului primit de la server.
++    // Daca sunt mai multe randuri cu acelasi externalId (nu ar trebui, dar ne asiguram),
++    // se actualizeaza cel mai recent inserat.
++    @Query(
++        """
++        UPDATE messages SET status = :status
++        WHERE id = (
++            SELECT id FROM messages WHERE externalId = :externalId ORDER BY id DESC LIMIT 1
++        )
++        """
++    )
++    suspend fun updateStatusByExternalId(externalId: String, status: String)
++
++    // Cate mesaje exista deja cu acest ID de la server. Folosit pentru deduplicare:
++    // fiecare SMS primit prin WebSocket e unic, deci daca ID-ul exista deja in DB,
++    // comanda e un duplicat (replay de flow, reconectare, sau retrimitere de la
++    // server dupa un ACK pierdut) si NU trebuie sa mai trimitem inca un SMS.
++    @Query("SELECT COUNT(*) FROM messages WHERE externalId = :externalId")
++    suspend fun countByExternalId(externalId: String): Int
++
+     @Query("SELECT * FROM messages")
+     fun getAllMessages(): Flow<List<Message>>
+ 
+     @Query("SELECT COUNT(*) FROM messages WHERE status = 'Received'")
+     fun getReceivedCount(): Flow<Int>
+ 
+-    @Query("SELECT COUNT(*) FROM messages WHERE status = 'Sent via WebSocket' OR status = 'Sent'")
++    // Inainte cauta exact 'Sent via WebSocket' / 'Sent'. Acum SmsStatusReceiver poate
++    // seta statusuri noi ('Trimis', 'Livrat', 'Trimitere in curs...', 'Esuat: ...'),
++    // asa ca definim "trimis" ca fiind orice mesaj care nu e 'Received', in loc sa
++    // hardcodam fiecare text de status posibil (fragil la orice schimbare viitoare).
++    @Query("SELECT COUNT(*) FROM messages WHERE status != 'Received'")
+     fun getSentCount(): Flow<Int>
+ 
+     @Query("SELECT * FROM messages WHERE status = 'Received' ORDER BY id ASC")
+     fun getReceivedMessagesAsc(): Flow<List<Message>>
+ 
+-    @Query("SELECT * FROM messages WHERE status = 'Sent via WebSocket' OR status = 'Sent' ORDER BY id DESC")
++    @Query("SELECT * FROM messages WHERE status != 'Received' ORDER BY id DESC")
+     fun getSentMessagesDesc(): Flow<List<Message>>
+ }
+diff --git a/app/src/main/java/ro/ase/traseelemele/services/BootReceiver.kt b/app/src/main/java/ro/ase/traseelemele/services/BootReceiver.kt
+new file mode 100644
+index 0000000..7f78caa
+--- /dev/null
++++ b/app/src/main/java/ro/ase/traseelemele/services/BootReceiver.kt
+@@ -0,0 +1,31 @@
++package ro.ase.traseelemele.services
++
++import android.content.BroadcastReceiver
++import android.content.Context
++import android.content.Intent
++import android.os.Build
++import android.util.Log
++
++/**
++ * RECEIVE_BOOT_COMPLETED era deja declarata in manifest, dar nu exista niciun receiver
++ * inregistrat pentru ea, deci dupa un restart de telefon (sau daca sistemul omoara
++ * serviciul, frecvent pe Xiaomi/Huawei/Samsung cu optimizare agresiva de baterie),
++ * WebSocketService nu mai pornea automat pana nu redeschideai manual aplicatia.
++ *
++ * Pornirea unui foreground service dintr-un receiver de BOOT_COMPLETED este una dintre
++ * putinele exceptii documentate de Android de la restrictiile de "background start"
++ * introduse in Android 12, asa ca startForegroundService() de aici e permis.
++ */
++class BootReceiver : BroadcastReceiver() {
++    override fun onReceive(context: Context, intent: Intent) {
++        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
++            Log.d("BootReceiver", "Boot completat, pornesc WebSocketService")
++            val serviceIntent = Intent(context, WebSocketService::class.java)
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++                context.startForegroundService(serviceIntent)
++            } else {
++                context.startService(serviceIntent)
++            }
++        }
++    }
++}
+diff --git a/app/src/main/java/ro/ase/traseelemele/services/SmsSender.kt b/app/src/main/java/ro/ase/traseelemele/services/SmsSender.kt
+index f117b5a..670ee79 100644
+--- a/app/src/main/java/ro/ase/traseelemele/services/SmsSender.kt
++++ b/app/src/main/java/ro/ase/traseelemele/services/SmsSender.kt
+@@ -1,18 +1,116 @@
+ package ro.ase.traseelemele
+ 
++import android.Manifest
++import android.app.PendingIntent
+ import android.content.Context
++import android.content.Intent
++import android.content.pm.PackageManager
+ import android.os.Build
+ import android.telephony.SmsManager
++import androidx.core.content.ContextCompat
+ 
+ object SmsSender {
+-    fun trimite(context: Context, numar: String, mesaj: String) {
+-        val smsMananger = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+-            context.getSystemService(SmsManager::class.java)
+-        } else {
+-            @Suppress("DEPRECATION")
+-            SmsManager.getDefault();
++
++    // Actiuni pentru broadcast-urile pe care SmsManager le trimite cand primeste
++    // rezultatul REAL al trimiterii/livrarii, nu doar "am apelat functia".
++    const val ACTION_SMS_SENT = "ro.ase.traseelemele.SMS_SENT"
++    const val ACTION_SMS_DELIVERED = "ro.ase.traseelemele.SMS_DELIVERED"
++    const val EXTRA_EXTERNAL_ID = "extra_external_id"
++
++    // Rezultatul imediat al apelului (nu al trimiterii efective, care e asincrona).
++    sealed class RezultatTrimitere {
++        object PermisiuneLipsa : RezultatTrimitere()
++        object Trimis : RezultatTrimitere()
++        data class Eroare(val exceptie: Exception) : RezultatTrimitere()
++    }
++
++    fun arePermisiune(context: Context): Boolean {
++        return ContextCompat.checkSelfPermission(
++            context,
++            Manifest.permission.SEND_SMS
++        ) == PackageManager.PERMISSION_GRANTED
++    }
++
++    /**
++     * Trimite un SMS.
++     *
++     * @param externalId ID-ul mesajului asa cum vine de la server (folosit ca sa putem
++     *        corela raspunsul asincron de livrare cu randul corect din baza de date).
++     *        Daca nu se da, se genereaza unul din timestamp.
++     *
++     * IMPORTANT: functia doar INITIAZA trimiterea. Rezultatul REAL (a plecat / nu a plecat,
++     * a fost livrat / a esuat din lipsa semnal etc.) vine asincron prin broadcast-urile
++     * ACTION_SMS_SENT / ACTION_SMS_DELIVERED, capturate de SmsStatusReceiver.
++     */
++    fun trimite(
++        context: Context,
++        numar: String,
++        mesaj: String,
++        externalId: String = System.currentTimeMillis().toString()
++    ): RezultatTrimitere {
++
++        if (!arePermisiune(context)) {
++            return RezultatTrimitere.PermisiuneLipsa
++        }
++
++        if (numar.isBlank() || mesaj.isBlank()) {
++            return RezultatTrimitere.Eroare(IllegalArgumentException("Numar sau mesaj gol"))
++        }
++
++        return try {
++            val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
++                context.getSystemService(SmsManager::class.java)
++            } else {
++                @Suppress("DEPRECATION")
++                SmsManager.getDefault()
++            }
++
++            // Mesajele cu diacritice romanesti (a, a, i, s, t) forteaza encoding UCS-2,
++            // care are limita de ~70 caractere pe segment (fata de 160 pe GSM-7).
++            // Fara divideMessage()/sendMultipartTextMessage(), un mesaj mai lung
++            // poate fi trunchiat sau poate esua silentios pe unele telefoane.
++            val partiMesaj = smsManager.divideMessage(mesaj)
++
++            if (partiMesaj.size <= 1) {
++                val sentPI = creeazaPendingIntent(context, ACTION_SMS_SENT, externalId, 0)
++                val deliveredPI = creeazaPendingIntent(context, ACTION_SMS_DELIVERED, externalId, 0)
++                smsManager.sendTextMessage(numar, null, mesaj, sentPI, deliveredPI)
++            } else {
++                val sentIntents = ArrayList<PendingIntent>(partiMesaj.size)
++                val deliveredIntents = ArrayList<PendingIntent>(partiMesaj.size)
++                for (i in partiMesaj.indices) {
++                    sentIntents.add(creeazaPendingIntent(context, ACTION_SMS_SENT, externalId, i))
++                    deliveredIntents.add(creeazaPendingIntent(context, ACTION_SMS_DELIVERED, externalId, i))
++                }
++                smsManager.sendMultipartTextMessage(numar, null, partiMesaj, sentIntents, deliveredIntents)
++            }
++
++            RezultatTrimitere.Trimis
++        } catch (e: Exception) {
++            // SecurityException (permisiune revocata intre verificare si apel),
++            // IllegalArgumentException (numar invalid), etc.
++            RezultatTrimitere.Eroare(e)
+         }
++    }
+ 
+-        smsMananger.sendTextMessage(numar, null, mesaj, null, null);
++    private fun creeazaPendingIntent(
++        context: Context,
++        action: String,
++        externalId: String,
++        partIndex: Int
++    ): PendingIntent {
++        val intent = Intent(action).apply {
++            setPackage(context.packageName)
++            putExtra(EXTRA_EXTERNAL_ID, externalId)
++        }
++        // requestCode trebuie sa fie unic per (mesaj, parte) altfel PendingIntent-urile
++        // se suprascriu intre ele si primesti statusul unui mesaj vechi.
++        val requestCode = externalId.hashCode() * 31 + partIndex
++        return PendingIntent.getBroadcast(
++            context,
++            requestCode,
++            intent,
++            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
++        )
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/app/src/main/java/ro/ase/traseelemele/services/SmsStatusReceiver.kt b/app/src/main/java/ro/ase/traseelemele/services/SmsStatusReceiver.kt
+new file mode 100644
+index 0000000..e351256
+--- /dev/null
++++ b/app/src/main/java/ro/ase/traseelemele/services/SmsStatusReceiver.kt
+@@ -0,0 +1,59 @@
++package ro.ase.traseelemele.services
++
++import android.app.Activity
++import android.content.BroadcastReceiver
++import android.content.Context
++import android.content.Intent
++import android.telephony.SmsManager
++import android.util.Log
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.launch
++import ro.ase.traseelemele.SmsSender
++import ro.ase.traseelemele.data.AppDatabase
++
++/**
++ * Prinde broadcast-urile ACTION_SMS_SENT / ACTION_SMS_DELIVERED trimise de SmsManager
++ * dupa ce radio-ul a incercat REALMENTE sa trimita mesajul. Pana acum aceste rezultate
++ * erau ignorate complet (sentIntent/deliveryIntent erau null in SmsSender), asa ca un
++ * esec real (fara semnal, SIM lipsa, blocaj operator) nu se vedea nicaieri.
++ */
++class SmsStatusReceiver : BroadcastReceiver() {
++    override fun onReceive(context: Context, intent: Intent) {
++        val externalId = intent.getStringExtra(SmsSender.EXTRA_EXTERNAL_ID) ?: return
++
++        val status = when (intent.action) {
++            SmsSender.ACTION_SMS_SENT -> statusDupaTrimitere(resultCode)
++            SmsSender.ACTION_SMS_DELIVERED -> {
++                if (resultCode == Activity.RESULT_OK) "Livrat" else "Livrare esuata"
++            }
++            else -> return
++        }
++
++        Log.d("SmsStatusReceiver", "externalId=$externalId action=${intent.action} status=$status")
++
++        // goAsync() tine receiver-ul (si procesul) in viata pana apelam finish().
++        // Fara el, onReceive() se termina imediat si Android poate omori procesul
++        // inainte ca scrierea in Room sa se finalizeze -> status pierdut.
++        val pendingResult = goAsync()
++        CoroutineScope(Dispatchers.IO).launch {
++            try {
++                AppDatabase.getDatabase(context).messageDao()
++                    .updateStatusByExternalId(externalId, status)
++            } finally {
++                pendingResult.finish()
++            }
++        }
++    }
++
++    private fun statusDupaTrimitere(resultCode: Int): String = when (resultCode) {
++        Activity.RESULT_OK -> "Trimis"
++        SmsManager.RESULT_ERROR_GENERIC_FAILURE -> "Esuat: eroare generica"
++        SmsManager.RESULT_ERROR_NO_SERVICE -> "Esuat: fara semnal/serviciu"
++        SmsManager.RESULT_ERROR_NULL_PDU -> "Esuat: eroare interna (PDU null)"
++        SmsManager.RESULT_ERROR_RADIO_OFF -> "Esuat: modul avion / radio oprit"
++        SmsManager.RESULT_ERROR_LIMIT_EXCEEDED -> "Esuat: limita de SMS-uri depasita"
++        SmsManager.RESULT_ERROR_FDN_CHECK_FAILURE -> "Esuat: blocat de lista FDN"
++        else -> "Esuat: cod necunoscut ($resultCode)"
++    }
++}
+diff --git a/app/src/main/java/ro/ase/traseelemele/services/WebSocketClient.kt b/app/src/main/java/ro/ase/traseelemele/services/WebSocketClient.kt
+index df369f6..75e21ed 100644
+--- a/app/src/main/java/ro/ase/traseelemele/services/WebSocketClient.kt
++++ b/app/src/main/java/ro/ase/traseelemele/services/WebSocketClient.kt
+@@ -37,7 +37,12 @@ class WebSocketClient private constructor(context: Context) {
+     private val _isConnected = MutableStateFlow(false)
+     val isConnected: StateFlow<Boolean> = _isConnected
+ 
+-    private val _messages = MutableSharedFlow<String>(replay = 5, extraBufferCapacity = 64)
++    // ATENTIE: replay trebuie sa fie 0. Cu replay = 5, cand WebSocketService era
++    // omorat si repornit (START_STICKY / redeschiderea aplicatiei), noul collector
++    // primea din nou ultimele 5 mesaje - inclusiv comenzi send-sms deja executate -
++    // si retrimitea SMS-urile. Buffer-ul extra ramane pentru a nu pierde mesaje
++    // cand consumatorul e momentan ocupat.
++    private val _messages = MutableSharedFlow<String>(replay = 0, extraBufferCapacity = 64)
+     val messages: SharedFlow<String> = _messages.asSharedFlow()
+ 
+     companion object {
+diff --git a/app/src/main/java/ro/ase/traseelemele/services/WebSocketService.kt b/app/src/main/java/ro/ase/traseelemele/services/WebSocketService.kt
+index 04f1808..775cd5a 100644
+--- a/app/src/main/java/ro/ase/traseelemele/services/WebSocketService.kt
++++ b/app/src/main/java/ro/ase/traseelemele/services/WebSocketService.kt
+@@ -3,11 +3,13 @@ package ro.ase.traseelemele.services
+ import android.app.Notification
+ import android.app.NotificationChannel
+ import android.app.NotificationManager
++import android.app.PendingIntent
+ import android.app.Service
+ import android.content.Intent
+ import android.os.IBinder
+ import android.util.Log
+ import androidx.core.app.NotificationCompat
++import ro.ase.traseelemele.MainActivity
+ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.Job
+@@ -15,10 +17,8 @@ import kotlinx.coroutines.cancel
+ import kotlinx.coroutines.flow.collectLatest
+ import kotlinx.coroutines.launch
+ import kotlinx.serialization.json.Json
+-import kotlinx.serialization.json.buildJsonObject
+ import kotlinx.serialization.json.jsonObject
+ import kotlinx.serialization.json.jsonPrimitive
+-import kotlinx.serialization.json.put
+ import ro.ase.traseelemele.SmsSender
+ import ro.ase.traseelemele.data.AppDatabase
+ import ro.ase.traseelemele.data.Message
+@@ -73,30 +73,74 @@ class WebSocketService : Service() {
+                     Log.d("WebSocketService", "SMS details - ID: $id, Phone: $phone, Message: $body")
+ 
+                     if (id != null) {
+-                        // Trimite ACK IMEDIAT
+-                        val ackResponse = buildJsonObject {
+-                            put("type", "ack")
+-                            put("id", id)
+-                        }.toString()
+-                        
+-                        Log.d("WebSocketService", "Attempting to send ACK for ID: $id")
+-                        webSocketClient.sendMessage(ackResponse)
++                        // NOTA: ACK-ul NU se mai trimite de aici. WebSocketClient.onMessage()
++                        // trimite deja ACK instant, pe acelasi socket, imediat ce soseste
++                        // mesajul. Inainte, ACK-ul pleca de DOUA ori (o data din client,
++                        // o data de aici) - eliminat ca serverul sa primeasca exact unul.
++
++                        // DEDUPLICARE: fiecare SMS de la server e unic (id unic). Daca
++                        // id-ul exista deja in DB, comanda e un duplicat (reconectare,
++                        // retrimitere de la server dupa ACK pierdut etc.) si NU trimitem
++                        // inca un SMS catre destinatar.
++                        if (database.messageDao().countByExternalId(id) > 0) {
++                            Log.w("WebSocketService", "Comanda send-sms duplicata (id=$id) - ignorata, SMS deja procesat")
++                            return
++                        }
+ 
+                         if (phone != null && body != null) {
+-                            try {
++                            if (!SmsSender.arePermisiune(applicationContext)) {
++                                // ASTA ERA BUG-UL PRINCIPAL: inainte se apela direct
++                                // SmsSender.trimite(...) fara nicio verificare de permisiune.
++                                // Daca userul nu trecuse niciodata prin ecranul manual
++                                // "Trimite SMS" (singurul loc care cerea SEND_SMS),
++                                // apelul arunca SecurityException, era prins silentios
++                                // in catch si userul nu vedea nicio eroare nicaieri.
++                                Log.e("WebSocketService", "SEND_SMS neacordat - nu pot trimite SMS catre $phone")
++                                database.messageDao().insert(
++                                    Message(
++                                        sender = phone,
++                                        message = body,
++                                        status = "Esuat: permisiune SEND_SMS lipsa",
++                                        externalId = id
++                                    )
++                                )
++                                notificaPermisiuneLipsa()
++                            } else {
+                                 Log.d("WebSocketService", "Sending SMS to $phone...")
+-                                SmsSender.trimite(applicationContext, phone, body)
+-                                
+-                                Log.d("WebSocketService", "Saving message to database...")
+-                                val messageEntry = Message(
+-                                    sender = phone,
+-                                    message = body,
+-                                    status = "Sent via WebSocket"
++
++                                // Salvam randul INAINTE de rezultatul final, ca sa avem
++                                // ceva in istoric chiar daca aplicatia e omorata inainte
++                                // sa vina raspunsul asincron. SmsStatusReceiver va actualiza
++                                // statusul cand vine rezultatul real de la SmsManager.
++                                database.messageDao().insert(
++                                    Message(
++                                        sender = phone,
++                                        message = body,
++                                        status = "Trimitere in curs...",
++                                        externalId = id
++                                    )
+                                 )
+-                                database.messageDao().insert(messageEntry)
+-                                Log.d("WebSocketService", "SMS sent and saved successfully")
+-                            } catch (e: Exception) {
+-                                Log.e("WebSocketService", "Error during SMS send/save: ${e.message}", e)
++
++                                when (val rezultat = SmsSender.trimite(applicationContext, phone, body, id)) {
++                                    is SmsSender.RezultatTrimitere.Trimis -> {
++                                        Log.d("WebSocketService", "SMS initiat cu succes catre $phone, astept rezultat real")
++                                    }
++                                    is SmsSender.RezultatTrimitere.Eroare -> {
++                                        Log.e("WebSocketService", "Eroare la trimitere: ${rezultat.exceptie.message}", rezultat.exceptie)
++                                        database.messageDao().updateStatusByExternalId(
++                                            id, "Esuat: ${rezultat.exceptie.message}"
++                                        )
++                                    }
++                                    is SmsSender.RezultatTrimitere.PermisiuneLipsa -> {
++                                        // Nu ar trebui sa ajungem aici (am verificat deja mai sus),
++                                        // dar tratam si cazul in care permisiunea a fost revocata
++                                        // exact intre cele doua verificari.
++                                        database.messageDao().updateStatusByExternalId(
++                                            id, "Esuat: permisiune SEND_SMS lipsa"
++                                        )
++                                        notificaPermisiuneLipsa()
++                                    }
++                                }
+                             }
+                         } else {
+                             Log.w("WebSocketService", "Missing phone or body for send-sms")
+@@ -130,8 +174,40 @@ class WebSocketService : Service() {
+             "Serviciu WebSocket",
+             NotificationManager.IMPORTANCE_LOW
+         )
++        val alertChannel = NotificationChannel(
++            "alerts_channel",
++            "Alerte SMS",
++            NotificationManager.IMPORTANCE_HIGH
++        )
+         val manager = getSystemService(NotificationManager::class.java)
+         manager.createNotificationChannel(channel)
++        manager.createNotificationChannel(alertChannel)
++    }
++
++    // Inainte, cand lipsea permisiunea SEND_SMS, esecul era vizibil doar in Logcat.
++    // Aceasta notificare (canal separat, importanta HIGH) apare efectiv pe ecran si,
++    // la tap, deschide aplicatia ca userul sa poata acorda permisiunea manual din
++    // ecranul "Trimite SMS".
++    private fun notificaPermisiuneLipsa() {
++        val intent = Intent(this, MainActivity::class.java).apply {
++            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
++        }
++        val pendingIntent = PendingIntent.getActivity(
++            this, 0, intent,
++            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
++        )
++
++        val notification = NotificationCompat.Builder(this, "alerts_channel")
++            .setContentTitle("SMS netrimis")
++            .setContentText("Lipseste permisiunea de trimitere SMS. Atinge pentru a o acorda.")
++            .setSmallIcon(android.R.drawable.stat_notify_error)
++            .setPriority(NotificationCompat.PRIORITY_HIGH)
++            .setAutoCancel(true)
++            .setContentIntent(pendingIntent)
++            .build()
++
++        val manager = getSystemService(NotificationManager::class.java)
++        manager.notify(2, notification)
+     }
+ 
+     private fun createNotification(isConnected: Boolean = false): Notification {
+diff --git a/app/src/main/java/ro/ase/traseelemele/ui/screens/ListaMesajeScreen.kt b/app/src/main/java/ro/ase/traseelemele/ui/screens/ListaMesajeScreen.kt
+index 76567bd..ee2fb38 100644
+--- a/app/src/main/java/ro/ase/traseelemele/ui/screens/ListaMesajeScreen.kt
++++ b/app/src/main/java/ro/ase/traseelemele/ui/screens/ListaMesajeScreen.kt
+@@ -87,10 +87,15 @@ fun MesajItem(mesaj: Message) {
+             Text(
+                 text = mesaj.status,
+                 style = MaterialTheme.typography.labelMedium,
+-                color = if (mesaj.status.contains("Sent")) 
+-                    MaterialTheme.colorScheme.primary 
+-                else 
+-                    MaterialTheme.colorScheme.secondary
++                // Statusurile de trimitere sunt acum in romana ("Trimis", "Livrat",
++                // "Trimitere in curs...", "Esuat: ..."), nu mai era corect sa cautam
++                // literal cuvantul englezesc "Sent".
++                color = when {
++                    mesaj.status.startsWith("Esuat") -> MaterialTheme.colorScheme.error
++                    mesaj.status == "Trimis" || mesaj.status == "Livrat" ||
++                        mesaj.status.contains("Sent") -> MaterialTheme.colorScheme.primary
++                    else -> MaterialTheme.colorScheme.secondary
++                }
+             )
+         }
+     }
+diff --git a/app/src/main/java/ro/ase/traseelemele/ui/screens/TrimiteSms.kt b/app/src/main/java/ro/ase/traseelemele/ui/screens/TrimiteSms.kt
+index 6f1f49d..66fb240 100644
+--- a/app/src/main/java/ro/ase/traseelemele/ui/screens/TrimiteSms.kt
++++ b/app/src/main/java/ro/ase/traseelemele/ui/screens/TrimiteSms.kt
+@@ -27,8 +27,7 @@ fun TrimiteSmsScreen() {
+         ActivityResultContracts.RequestPermission()
+     ) { esteAcordata ->
+         if (esteAcordata) {
+-            SmsSender.trimite(context, numar, mesaj)
+-            statusMesaj = "SMS trimis către $numar"
++            statusMesaj = trimiteSiFormateazaStatus(context, numar, mesaj)
+         } else {
+             statusMesaj = "Permisiunea SEND_SMS a fost refuzată"
+         }
+@@ -65,8 +64,7 @@ fun TrimiteSmsScreen() {
+ 
+                     if (permisiuneAcordata) {
+                         // trimite direct, fara sa mai intrebe
+-                        SmsSender.trimite(context, numar, mesaj)
+-                        statusMesaj = "SMS trimis către $numar"
++                        statusMesaj = trimiteSiFormateazaStatus(context, numar, mesaj)
+                     } else {
+                         // prima data, cere permisiunea
+                         permissionLauncher.launch(Manifest.permission.SEND_SMS)
+@@ -84,7 +82,7 @@ fun TrimiteSmsScreen() {
+         if (statusMesaj.isNotBlank()) {
+             Text(
+                 text = statusMesaj,
+-                color = if (statusMesaj.contains("a fost trimis"))
++                color = if (statusMesaj.startsWith("SMS trimis"))
+                     MaterialTheme.colorScheme.primary
+                 else
+                     MaterialTheme.colorScheme.error,
+@@ -92,4 +90,19 @@ fun TrimiteSmsScreen() {
+         }
+     }
+ 
++}
++
++// Apeleaza SmsSender si transforma RezultatTrimitere intr-un text de status pentru UI.
++// Inainte, "SMS trimis catre X" aparea mereu, chiar daca trimiterea a esuat intern
++// (SmsSender.trimite() nu intorcea nimic, deci UI-ul afisa mereu succes).
++private fun trimiteSiFormateazaStatus(
++    context: android.content.Context,
++    numar: String,
++    mesaj: String
++): String {
++    return when (val rezultat = SmsSender.trimite(context, numar, mesaj)) {
++        is SmsSender.RezultatTrimitere.Trimis -> "SMS trimis către $numar"
++        is SmsSender.RezultatTrimitere.PermisiuneLipsa -> "Permisiunea SEND_SMS a fost refuzată"
++        is SmsSender.RezultatTrimitere.Eroare -> "Eroare la trimitere: ${rezultat.exceptie.message}"
++    }
+ }
+\ No newline at end of file

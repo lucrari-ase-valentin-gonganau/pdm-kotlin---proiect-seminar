@@ -29,106 +29,69 @@ class WebSocketService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.d("WebSocketService", "Service onCreate started")
         webSocketClient = WebSocketClient.getInstance(applicationContext)
         database = AppDatabase.getDatabase(applicationContext)
 
         createNotificationChannel()
         startForeground(1, createNotification())
-        
+
         observeMessages()
+        observeConnectionState()
+    }
+
+    private fun observeConnectionState() {
+        serviceScope.launch {
+            webSocketClient.isConnected.collectLatest { connected ->
+                updateNotification(connected)
+            }
+        }
     }
 
     private fun observeMessages() {
         serviceScope.launch {
-            Log.d("WebSocketService", "Starting to observe messages flow")
             webSocketClient.messages.collect { jsonString ->
-                Log.d("WebSocketService", "Flow emitted: $jsonString")
-                if (jsonString.isNotBlank()) {
-                    processIncomingMessage(jsonString)
-                }
+                if (jsonString.isNotBlank()) processIncomingMessage(jsonString)
             }
         }
     }
 
     private suspend fun processIncomingMessage(jsonString: String) {
         try {
-            Log.d("WebSocketService", "Processing message: $jsonString")
             val json = Json.parseToJsonElement(jsonString).jsonObject
-            val type = json["type"]?.jsonPrimitive?.content
-            Log.d("WebSocketService", "Message type identified: $type")
-            
-            when (type) {
-                "connection" -> {
-                    val clientId = json["clientIdSavedInDatabase"]?.jsonPrimitive?.content
-                    Log.d("WebSocketService", "Server confirmed connection. Client ID: $clientId")
-                }
+            when (json["type"]?.jsonPrimitive?.content) {
+                "connection" -> Unit
                 "send-sms" -> {
-                    val id = json["id"]?.jsonPrimitive?.content
+                    val id = json["id"]?.jsonPrimitive?.content ?: return
                     val phone = json["phone"]?.jsonPrimitive?.content
                     val body = json["message"]?.jsonPrimitive?.content
-                    
-                    Log.d("WebSocketService", "SMS details - ID: $id, Phone: $phone, Message: $body")
 
-                    if (id != null) {
-                        val ackResponse = buildJsonObject {
-                            put("type", "ack")
-                            put("id", id)
-                        }.toString()
-                        
-                        Log.d("WebSocketService", "Attempting to send ACK for ID: $id")
-                        webSocketClient.sendMessage(ackResponse)
+                    webSocketClient.sendMessage(buildJsonObject {
+                        put("type", "ack")
+                        put("id", id)
+                    }.toString())
 
-                        if (phone != null && body != null) {
-                            try {
-                                Log.d("WebSocketService", "Sending SMS to $phone...")
-                                SmsSender.trimite(applicationContext, phone, body)
-                                
-                                Log.d("WebSocketService", "Saving message to database...")
-                                val messageEntry = Message(
-                                    sender = phone,
-                                    message = body,
-                                    status = "Sent via WebSocket"
-                                )
-                                database.messageDao().insert(messageEntry)
-                                Log.d("WebSocketService", "SMS sent and saved successfully")
-                            } catch (e: Exception) {
-                                Log.e("WebSocketService", "Error during SMS send/save: ${e.message}", e)
-                            }
-                        } else {
-                            Log.w("WebSocketService", "Missing phone or body for send-sms")
+                    if (phone != null && body != null) {
+                        try {
+                            SmsSender.trimite(applicationContext, phone, body)
+                            database.messageDao().insert(Message(sender = phone, message = body, status = "Sent via WebSocket"))
+                        } catch (e: Exception) {
+                            Log.e("WebSocketService", "SMS send error: ${e.message}")
                         }
-                    } else {
-                        Log.w("WebSocketService", "Missing ID for send-sms")
                     }
-                }
-                else -> {
-                    Log.d("WebSocketService", "Received unknown or unhandled message type: $type")
                 }
             }
         } catch (e: Exception) {
-            Log.e("WebSocketService", "Error parsing/processing message: ${e.message}", e)
+            Log.e("WebSocketService", "Message parse error: ${e.message}")
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d("WebSocketService", "onStartCommand received")
-        serviceScope.launch {
-            webSocketClient.isConnected.collectLatest { connected ->
-                updateNotification(connected)
-            }
-        }
         return START_STICKY
     }
 
     private fun createNotificationChannel() {
-        val channel = NotificationChannel(
-            "websocket_channel",
-            "Serviciu WebSocket",
-            NotificationManager.IMPORTANCE_LOW
-        )
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(channel)
+        val channel = NotificationChannel("websocket_channel", "Serviciu WebSocket", NotificationManager.IMPORTANCE_LOW)
+        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
     private fun createNotification(isConnected: Boolean = false): Notification {
@@ -142,16 +105,13 @@ class WebSocketService : Service() {
     }
 
     private fun updateNotification(isConnected: Boolean) {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(1, createNotification(isConnected))
+        getSystemService(NotificationManager::class.java).notify(1, createNotification(isConnected))
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        Log.d("WebSocketService", "Service onDestroy")
         super.onDestroy()
-        webSocketClient.disconnect()
         serviceScope.cancel()
     }
 }
