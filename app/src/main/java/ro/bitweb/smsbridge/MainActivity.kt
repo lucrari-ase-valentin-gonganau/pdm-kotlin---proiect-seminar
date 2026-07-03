@@ -1,0 +1,59 @@
+package ro.bitweb.smsbridge
+
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
+import androidx.core.content.ContextCompat
+import ro.bitweb.smsbridge.services.WebSocketService
+import ro.bitweb.smsbridge.ui.AppNavGraph
+import ro.bitweb.smsbridge.ui.theme.TraseeleenteTheme
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        
+        // Pornim serviciul WebSocket pentru a procesa mesajele in fundal
+        val serviceIntent = Intent(this, WebSocketService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+
+        enableEdgeToEdge()
+        setContent {
+            TraseeleenteTheme {
+                // POST_NOTIFICATIONS era declarata in manifest dar nu era ceruta
+                // niciodata la runtime (obligatoriu pe Android 13+ / targetSdk 36).
+                // Fara ea, notificarea foreground-ului WebSocketService (indicatorul
+                // "Conectat / Gata de trimitere") nu se afiseaza deloc.
+                val notificationPermissionLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission()
+                ) { /* nu blocam functionarea aplicatiei daca userul refuza */ }
+
+                LaunchedEffect(Unit) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        val areDeja = ContextCompat.checkSelfPermission(
+                            this@MainActivity,
+                            Manifest.permission.POST_NOTIFICATIONS
+                        ) == PackageManager.PERMISSION_GRANTED
+
+                        if (!areDeja) {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
+                }
+
+                AppNavGraph()
+            }
+        }
+    }
+}

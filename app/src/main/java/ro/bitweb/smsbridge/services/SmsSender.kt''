@@ -1,0 +1,116 @@
+package ro.ase.traseelemele
+
+import android.Manifest
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.telephony.SmsManager
+import androidx.core.content.ContextCompat
+
+object SmsSender {
+
+    // Actiuni pentru broadcast-urile pe care SmsManager le trimite cand primeste
+    // rezultatul REAL al trimiterii/livrarii, nu doar "am apelat functia".
+    const val ACTION_SMS_SENT = "ro.ase.traseelemele.SMS_SENT"
+    const val ACTION_SMS_DELIVERED = "ro.ase.traseelemele.SMS_DELIVERED"
+    const val EXTRA_EXTERNAL_ID = "extra_external_id"
+
+    // Rezultatul imediat al apelului (nu al trimiterii efective, care e asincrona).
+    sealed class RezultatTrimitere {
+        object PermisiuneLipsa : RezultatTrimitere()
+        object Trimis : RezultatTrimitere()
+        data class Eroare(val exceptie: Exception) : RezultatTrimitere()
+    }
+
+    fun arePermisiune(context: Context): Boolean {
+        return ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.SEND_SMS
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    /**
+     * Trimite un SMS.
+     *
+     * @param externalId ID-ul mesajului asa cum vine de la server (folosit ca sa putem
+     *        corela raspunsul asincron de livrare cu randul corect din baza de date).
+     *        Daca nu se da, se genereaza unul din timestamp.
+     *
+     * IMPORTANT: functia doar INITIAZA trimiterea. Rezultatul REAL (a plecat / nu a plecat,
+     * a fost livrat / a esuat din lipsa semnal etc.) vine asincron prin broadcast-urile
+     * ACTION_SMS_SENT / ACTION_SMS_DELIVERED, capturate de SmsStatusReceiver.
+     */
+    fun trimite(
+        context: Context,
+        numar: String,
+        mesaj: String,
+        externalId: String = System.currentTimeMillis().toString()
+    ): RezultatTrimitere {
+
+        if (!arePermisiune(context)) {
+            return RezultatTrimitere.PermisiuneLipsa
+        }
+
+        if (numar.isBlank() || mesaj.isBlank()) {
+            return RezultatTrimitere.Eroare(IllegalArgumentException("Numar sau mesaj gol"))
+        }
+
+        return try {
+            val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                context.getSystemService(SmsManager::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                SmsManager.getDefault()
+            }
+
+            // Mesajele cu diacritice romanesti (a, a, i, s, t) forteaza encoding UCS-2,
+            // care are limita de ~70 caractere pe segment (fata de 160 pe GSM-7).
+            // Fara divideMessage()/sendMultipartTextMessage(), un mesaj mai lung
+            // poate fi trunchiat sau poate esua silentios pe unele telefoane.
+            val partiMesaj = smsManager.divideMessage(mesaj)
+
+            if (partiMesaj.size <= 1) {
+                val sentPI = creeazaPendingIntent(context, ACTION_SMS_SENT, externalId, 0)
+                val deliveredPI = creeazaPendingIntent(context, ACTION_SMS_DELIVERED, externalId, 0)
+                smsManager.sendTextMessage(numar, null, mesaj, sentPI, deliveredPI)
+            } else {
+                val sentIntents = ArrayList<PendingIntent>(partiMesaj.size)
+                val deliveredIntents = ArrayList<PendingIntent>(partiMesaj.size)
+                for (i in partiMesaj.indices) {
+                    sentIntents.add(creeazaPendingIntent(context, ACTION_SMS_SENT, externalId, i))
+                    deliveredIntents.add(creeazaPendingIntent(context, ACTION_SMS_DELIVERED, externalId, i))
+                }
+                smsManager.sendMultipartTextMessage(numar, null, partiMesaj, sentIntents, deliveredIntents)
+            }
+
+            RezultatTrimitere.Trimis
+        } catch (e: Exception) {
+            // SecurityException (permisiune revocata intre verificare si apel),
+            // IllegalArgumentException (numar invalid), etc.
+            RezultatTrimitere.Eroare(e)
+        }
+    }
+
+    private fun creeazaPendingIntent(
+        context: Context,
+        action: String,
+        externalId: String,
+        partIndex: Int
+    ): PendingIntent {
+        val intent = Intent(action).apply {
+            setPackage(context.packageName)
+            putExtra(EXTRA_EXTERNAL_ID, externalId)
+        }
+        // requestCode trebuie sa fie unic per (mesaj, parte) altfel PendingIntent-urile
+        // se suprascriu intre ele si primesti statusul unui mesaj vechi.
+        val requestCode = externalId.hashCode() * 31 + partIndex
+        return PendingIntent.getBroadcast(
+            context,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+}

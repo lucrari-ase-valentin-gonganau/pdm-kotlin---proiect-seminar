@@ -1,0 +1,36 @@
+package ro.bitweb.smsbridge.data
+
+import android.content.Context
+import androidx.room.Database
+import androidx.room.Room
+import androidx.room.RoomDatabase
+
+@Database(
+    entities = [Message::class],
+    version = 2
+)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun messageDao(): MessageDao
+
+    companion object {
+        @Volatile
+        private var INSTANCE: AppDatabase? = null
+
+        fun getDatabase(context: Context): AppDatabase {
+            return INSTANCE ?: synchronized(this) {
+                val instance = Room.databaseBuilder(
+                    context.applicationContext,
+                    AppDatabase::class.java,
+                    "app_database"
+                )
+                    // S-a adaugat campul externalId (v1 -> v2). Nu avem inca o Migration
+                    // scrisa de mana, asa ca DB-ul local se recreeaza la upgrade
+                    // (se pierde istoricul local de mesaje, dar e ok pentru un proiect activ).
+                    .fallbackToDestructiveMigration()
+                    .build()
+                INSTANCE = instance
+                instance
+            }
+        }
+    }
+}

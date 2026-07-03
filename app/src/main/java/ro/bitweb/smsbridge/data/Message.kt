@@ -1,0 +1,69 @@
+package ro.bitweb.smsbridge.data
+
+import androidx.room.Dao
+import androidx.room.Entity
+import androidx.room.Insert
+import androidx.room.PrimaryKey
+import androidx.room.Query
+import androidx.room.Update
+import kotlinx.coroutines.flow.Flow
+
+@Entity(tableName = "messages")
+data class Message(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val sender: String,
+    val message: String,
+    val status: String,
+    // ID-ul mesajului asa cum vine de la server prin WebSocket (campul "id" din JSON).
+    // Folosit ca sa putem actualiza statusul (Trimis/Livrat/Esuat) cand vine raspunsul
+    // real de la SmsManager, care soseste asincron dupa ce randul a fost deja inserat.
+    val externalId: String? = null
+)
+
+@Dao
+interface MessageDao {
+    @Insert
+    suspend fun insert(message: Message): Long
+
+    @Update
+    suspend fun update(message: Message)
+
+    // Actualizeaza statusul unui mesaj trimis, pe baza ID-ului primit de la server.
+    // Daca sunt mai multe randuri cu acelasi externalId (nu ar trebui, dar ne asiguram),
+    // se actualizeaza cel mai recent inserat.
+    @Query(
+        """
+        UPDATE messages SET status = :status
+        WHERE id = (
+            SELECT id FROM messages WHERE externalId = :externalId ORDER BY id DESC LIMIT 1
+        )
+        """
+    )
+    suspend fun updateStatusByExternalId(externalId: String, status: String)
+
+    // Cate mesaje exista deja cu acest ID de la server. Folosit pentru deduplicare:
+    // fiecare SMS primit prin WebSocket e unic, deci daca ID-ul exista deja in DB,
+    // comanda e un duplicat (replay de flow, reconectare, sau retrimitere de la
+    // server dupa un ACK pierdut) si NU trebuie sa mai trimitem inca un SMS.
+    @Query("SELECT COUNT(*) FROM messages WHERE externalId = :externalId")
+    suspend fun countByExternalId(externalId: String): Int
+
+    @Query("SELECT * FROM messages")
+    fun getAllMessages(): Flow<List<Message>>
+
+    @Query("SELECT COUNT(*) FROM messages WHERE status = 'Received'")
+    fun getReceivedCount(): Flow<Int>
+
+    // Inainte cauta exact 'Sent via WebSocket' / 'Sent'. Acum SmsStatusReceiver poate
+    // seta statusuri noi ('Trimis', 'Livrat', 'Trimitere in curs...', 'Esuat: ...'),
+    // asa ca definim "trimis" ca fiind orice mesaj care nu e 'Received', in loc sa
+    // hardcodam fiecare text de status posibil (fragil la orice schimbare viitoare).
+    @Query("SELECT COUNT(*) FROM messages WHERE status != 'Received'")
+    fun getSentCount(): Flow<Int>
+
+    @Query("SELECT * FROM messages WHERE status = 'Received' ORDER BY id ASC")
+    fun getReceivedMessagesAsc(): Flow<List<Message>>
+
+    @Query("SELECT * FROM messages WHERE status != 'Received' ORDER BY id DESC")
+    fun getSentMessagesDesc(): Flow<List<Message>>
+}
