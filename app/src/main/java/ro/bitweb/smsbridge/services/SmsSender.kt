@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.telephony.SmsManager
+import android.telephony.SubscriptionManager
 import androidx.core.content.ContextCompat
 
 object SmsSender {
@@ -58,12 +59,7 @@ object SmsSender {
         }
 
         return try {
-            val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                context.getSystemService(SmsManager::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                SmsManager.getDefault()
-            }
+            val smsManager = getSmsManager(context)
 
             // Mesajele cu diacritice romanesti (a, a, i, s, t) forteaza encoding UCS-2,
             // care are limita de ~70 caractere pe segment (fata de 160 pe GSM-7).
@@ -90,6 +86,34 @@ object SmsSender {
             // SecurityException (permisiune revocata intre verificare si apel),
             // IllegalArgumentException (numar invalid), etc.
             RezultatTrimitere.Eroare(e)
+        }
+    }
+
+    private fun getSmsManager(context: Context): SmsManager {
+        // getDefaultSmsSubscriptionId() nu necesita READ_PHONE_STATE - e o metoda
+        // statica publica care citeste preferinta userului, nu date despre abonament.
+        // Rezolva codul de eroare 32 (RESULT_NO_DEFAULT_SMS_APP) care apare cand
+        // getDefault() / getSystemService(SmsManager) nu poate determina SIM-ul implicit.
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            val subId = SubscriptionManager.getDefaultSmsSubscriptionId()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val mgr = context.getSystemService(SmsManager::class.java)
+                if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                    mgr.createForSubscriptionId(subId)
+                } else {
+                    mgr
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                    SmsManager.getSmsManagerForSubscriptionId(subId)
+                } else {
+                    SmsManager.getDefault()
+                }
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            SmsManager.getDefault()
         }
     }
 

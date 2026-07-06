@@ -17,7 +17,11 @@ data class Message(
     // ID-ul mesajului asa cum vine de la server prin WebSocket (campul "id" din JSON).
     // Folosit ca sa putem actualiza statusul (Trimis/Livrat/Esuat) cand vine raspunsul
     // real de la SmsManager, care soseste asincron dupa ce randul a fost deja inserat.
-    val externalId: String? = null
+    val externalId: String? = null,
+    // Momentul (epoch millis) cand mesajul a fost inserat local. Folosit pentru
+    // filtrarea dupa interval de date in lista de mesaje. Default = acum, evaluat la
+    // construirea obiectului (adica chiar inainte de insert).
+    val timestamp: Long = System.currentTimeMillis()
 )
 
 @Dao
@@ -61,9 +65,61 @@ interface MessageDao {
     @Query("SELECT COUNT(*) FROM messages WHERE status != 'Received'")
     fun getSentCount(): Flow<Int>
 
-    @Query("SELECT * FROM messages WHERE status = 'Received' ORDER BY id ASC")
-    fun getReceivedMessagesAsc(): Flow<List<Message>>
+    // Totalul de mesaje (trimise + in asteptare). Folosit pentru butonul de sumar
+    // "SMS-uri (trimise/total)".
+    @Query("SELECT COUNT(*) FROM messages")
+    fun getTotalCount(): Flow<Int>
 
-    @Query("SELECT * FROM messages WHERE status != 'Received' ORDER BY id DESC")
-    fun getSentMessagesDesc(): Flow<List<Message>>
+    // Lista paginata + filtrata pentru ecranul de mesaje.
+    //  - tip: "toate" | "trimise" | "receptionate"
+    //  - q: cautare in numar (sender) SAU in textul mesajului (message); "" = fara filtru
+    //  - fromTs / toTs: interval de timp (epoch millis); null = capat deschis
+    //  - limit: cate randuri se incarca (creste cu 20 la scroll = infinite scroll)
+    // Ordonat mereu descrescator (cele mai noi primele) ca sa fie consistent cu
+    // incarcarea progresiva.
+    @Query(
+        """
+        SELECT * FROM messages
+        WHERE (
+            :tip = 'toate'
+            OR (:tip = 'trimise' AND status != 'Received')
+            OR (:tip = 'receptionate' AND status = 'Received')
+        )
+        AND (:q = '' OR sender LIKE '%' || :q || '%' OR message LIKE '%' || :q || '%')
+        AND (:fromTs IS NULL OR timestamp >= :fromTs)
+        AND (:toTs IS NULL OR timestamp <= :toTs)
+        ORDER BY id DESC
+        LIMIT :limit
+        """
+    )
+    fun getMessagesFiltered(
+        tip: String,
+        q: String,
+        fromTs: Long?,
+        toTs: Long?,
+        limit: Int
+    ): Flow<List<Message>>
+
+    // Aceleasi filtre ca mai sus, dar fara limita si ca lista simpla (nu Flow).
+    // Folosit la export CSV: exportam exact ce corespunde filtrelor active.
+    @Query(
+        """
+        SELECT * FROM messages
+        WHERE (
+            :tip = 'toate'
+            OR (:tip = 'trimise' AND status != 'Received')
+            OR (:tip = 'receptionate' AND status = 'Received')
+        )
+        AND (:q = '' OR sender LIKE '%' || :q || '%' OR message LIKE '%' || :q || '%')
+        AND (:fromTs IS NULL OR timestamp >= :fromTs)
+        AND (:toTs IS NULL OR timestamp <= :toTs)
+        ORDER BY id DESC
+        """
+    )
+    suspend fun getMessagesForExport(
+        tip: String,
+        q: String,
+        fromTs: Long?,
+        toTs: Long?
+    ): List<Message>
 }
